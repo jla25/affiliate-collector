@@ -1,34 +1,161 @@
 # Affiliate Collector
 
-API REST (FastAPI) que descarga y normaliza datos de afiliados desde múltiples plataformas. Centraliza métricas de clicks, registros, depósitos e ingresos en un formato unificado.
+API REST construida con **FastAPI** que descarga y normaliza datos de afiliados desde múltiples plataformas. Centraliza métricas de clicks, registros, depósitos e ingresos en un único formato unificado (`DataRow`).
 
-## Instalación
+---
+
+## Requisitos
+
+- Python 3.10+
+- pip
+
+---
+
+## Instalación y puesta en marcha
+
+### 1. Clonar el repositorio
 
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/jla25/affiliate-collector.git
+cd affiliate-collector
+```
+
+### 2. Crear entorno virtual e instalar dependencias
+
+```bash
+python -m venv venv
+
+# Windows
+venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
+
+pip install -r backend/requirements.txt
+```
+
+### 3. Configurar variables de entorno
+
+Copia el archivo de ejemplo y rellena tus credenciales:
+
+```bash
+cp .env.example .env
+```
+
+Edita `.env` con los valores reales de cada operador. Las credenciales también se pueden gestionar directamente desde la API (`POST /operators/`), en cuyo caso el `.env` es opcional.
+
+### 4. Inicializar la base de datos y el usuario admin
+
+La base de datos SQLite se crea automáticamente al arrancar. Al primer inicio, crea el usuario administrador:
+
+```bash
+cd backend
 uvicorn main:app --reload
 ```
 
-Documentación interactiva disponible en `http://localhost:8000/docs`.
+Con la API corriendo, llama a:
+
+```bash
+POST http://localhost:8000/auth/init
+{
+  "username": "admin",
+  "password": "tu_password_seguro"
+}
+```
+
+> Este endpoint solo funciona si no existe ningún usuario en la base de datos.
+
+### 5. Autenticación
+
+Obtén un token JWT para el resto de llamadas:
+
+```bash
+POST http://localhost:8000/auth/login
+{
+  "username": "admin",
+  "password": "tu_password_seguro"
+}
+```
+
+Incluye el token en todas las peticiones posteriores:
+
+```
+Authorization: Bearer <token>
+```
+
+### 6. Documentación interactiva
+
+Con el servidor corriendo, accede a:
+
+```
+http://localhost:8000/docs
+```
+
+---
+
+## Gestión de operadores
+
+### Añadir un operador
+
+```bash
+POST /operators/
+{
+  "name": "Nombre Operador",
+  "platform": "incomeaccess",
+  "url": "https://partners.operador.com",
+  "credentials": { "api_key": "..." }
+}
+```
+
+### Listar operadores activos
+
+```bash
+GET /operators/
+```
+
+### Activar / desactivar un operador
+
+```bash
+PATCH /operators/{id}
+{ "active": false }
+```
+
+---
+
+## Lanzar colección de datos
+
+```bash
+POST /collect/
+
+# Mes completo
+{ "operators": ["YO Group"], "month": "2026-04" }
+
+# Rango libre
+{ "from_to": ["2026-04-01", "2026-04-30"] }
+
+# Últimos N días
+{ "last": 30 }
+
+# Todos los operadores activos
+{ "month": "2026-04" }
+```
+
+La respuesta incluye las filas recogidas (`DataRow`), un resumen por canal/campaña y el número total de filas CPA.
 
 ---
 
 ## Plataformas soportadas
 
 ### MyAffiliates
-Plataforma usada por: **Betsson Group**, **Betify**, **Maxibet**
+Usada por: **Betsson Group**, **Betify**, **Maxibet**
 
-- **Auth**: HTTP Basic (user/pass) o OAuth 2.0 (client_id/client_secret)
+- **Auth**: HTTP Basic (`user` / `pass`)
 - **Formato**: CSV multi-sección (un bloque de cabecera por grupo de clientes)
 - **Credenciales**:
   ```json
   { "user": "...", "pass": "..." }
   ```
-  o con OAuth:
-  ```json
-  { "client_id": "...", "client_secret": "..." }
-  ```
-- **Opción `hybrid_groups`**: lista de IDs de Customer Group a incluir. Cuando se define, solo se procesan las secciones de tipo Hybrid (con columna `Qualified NDCs`). Sin `hybrid_groups`, se recogen todas las secciones.
+- **Opción `hybrid_groups`**: lista de IDs de Customer Group a procesar en modo Hybrid (secciones con columna `Qualified NDCs`). Sin este campo, se recogen **todas** las secciones del CSV.
   ```json
   { "user": "...", "pass": "...", "hybrid_groups": [4, 17] }
   ```
@@ -47,7 +174,7 @@ Plataforma usada por: **Betsson Group**, **Betify**, **Maxibet**
 ---
 
 ### Superpartners
-Plataforma usada por: **Betway**, **Betway RS**
+Usada por: **Betway**, **Betway RS**
 
 - **Auth**: API key + username en query params
 - **Endpoint**: `/api/feed/hybrid/traffic` (datos diarios por campaña y brand)
@@ -65,15 +192,15 @@ Plataforma usada por: **Betway**, **Betway RS**
 | newActivePurchasing | `ftd` / `ndc` |
 | qualifieds | `qftd` |
 | deposits | `total_deposits` |
-| nevRevenue | `revenue_total` |
+| netRevenue | `revenue_total` |
 | revShareEarnings | `income_revshare` |
 | cpaEarnings | `income_cpa` |
 | totalEarnings | `income_total` |
 
 ---
 
-### Affilka
-Plataforma usada por: **BCGame**
+### Affilka (by SOFTSWISS)
+Usada por: **BCGame**
 
 - **Auth**: Bearer token en cabecera
 - **Endpoint**: `/api/customer/v1/partner/report` (agrupado por día + campaña)
@@ -82,13 +209,14 @@ Plataforma usada por: **BCGame**
   { "api_key": "..." }
   ```
 
+> **Nota**: En Affilka, todo FTD se considera cualificado (cumple el requisito de depósito), por lo que `qftd = ftd`.
+
 | Campo JSON | Campo interno |
 |---|---|
 | campaign_id | `affiliate_name` (resuelto via `/partner/campaigns`) |
 | visits_count | `clicks` |
 | registrations_count | `nrc` |
-| first_deposits_count | `ftd` / `ndc` |
-| qualified_players_count | `qftd` |
+| first_deposits_count | `ftd` / `ndc` / `qftd` |
 | deposits_sum | `total_deposits` |
 | first_deposits_sum | `first_deposit` |
 | ngr | `revenue_total` |
@@ -97,16 +225,16 @@ Plataforma usada por: **BCGame**
 ---
 
 ### Income Access
-Plataforma usada por: **YO Group**
+Usada por: **YO Group**
 
 - **Auth**: API key en query param (`key=...`)
 - **Endpoint**: `/api/affreporting.asp?reportname=EarningsReport&reportdisplayby=site`
-- **Formato**: XML SOAP — una fila por afiliado (site) con totales del período
+- **Formato**: XML — una fila por afiliado (site) con totales del período completo
 - **Credenciales**:
   ```json
   { "api_key": "..." }
   ```
-  Opcionalmente `merchant_id` (por defecto `"0"` = todos):
+  Opcionalmente `merchant_id` (por defecto `"0"` = todos los merchants):
   ```json
   { "api_key": "...", "merchant_id": "9" }
   ```
@@ -124,49 +252,21 @@ Plataforma usada por: **YO Group**
 | CPACommission | `income_cpa` |
 | totalcommission | `income_total` |
 
-> **Nota**: Income Access no ofrece desglose diario por afiliado. Cada row representa el total del período completo solicitado. La `date` se fija al primer día del rango.
+> **Nota**: Income Access no ofrece desglose diario por afiliado. Cada fila representa el total del período solicitado. El campo `date` se fija al primer día del rango.
 
 ---
 
-### NetRefer (pendiente)
-Plataforma usada por: **Hell Partners**
+### NetRefer *(pendiente)*
+Usada por: **Hell Partners**
 
 - **Auth**: OAuth 2.0 vía Azure AD (password grant)
-- **API**: ASR 1.0 — en *limited launch*, requiere credenciales específicas de onboarding
+- **API**: ASR 1.0 — en *limited launch*, requiere credenciales de onboarding específicas
 - **Credenciales necesarias** (solicitadas al operador):
   ```json
   { "client_id": "...", "client_secret": "...", "username": "...", "password": "..." }
   ```
 
 ---
-
-## Añadir un operador
-
-```bash
-POST /operators/
-{
-  "name": "Nombre Operador",
-  "platform": "incomeaccess",
-  "url": "https://partners.operador.com",
-  "credentials": { "api_key": "..." }
-}
-```
-
-## Lanzar colección
-
-```bash
-POST /collect/
-{ "operators": ["YO Group"], "month": "2026-04" }
-
-# Rango libre
-{ "from_to": ["2026-04-01", "2026-04-30"] }
-
-# Últimos N días
-{ "last": 30 }
-
-# Todos los operadores activos
-{ "month": "2026-04" }
-```
 
 ## Campos del DataRow (formato unificado)
 
@@ -193,6 +293,8 @@ POST /collect/
 | `income_cpl` | float? | Comisión CPL |
 | `income_total` | float? | Comisión total |
 
+---
+
 ## Archivos raw
 
-Los datos originales se guardan en `backend/data/raw/` con el nombre `{operador}_{from}_{to}.{ext}` para trazabilidad.
+Los datos originales se guardan en `backend/data/raw/` con el nombre `{operador}_{from}_{to}.{ext}` para trazabilidad. Esta carpeta está excluida del repositorio (`.gitignore`).
