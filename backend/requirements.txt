@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+sqlalchemy
+python-jose[cryptography]
+bcrypt
+python-multipart
+requests
+python-dotenv
+python-dateutil
